@@ -1,0 +1,122 @@
+SET ThousandSep=',';
+SET DecimalSep='.';
+SET MoneyThousandSep=',';
+SET MoneyDecimalSep='.';
+SET MoneyFormat='$ ###0.00;-$ ###0.00';
+SET TimeFormat='h:mm:ss TT';
+SET DateFormat='M/D/YYYY';
+SET TimestampFormat='M/D/YYYY h:mm:ss[.fff] TT';
+SET FirstWeekDay=6;
+SET BrokenWeeks=1;
+SET ReferenceDay=0;
+SET FirstMonthOfYear=1;
+SET CollationLocale='en-US';
+SET CreateSearchIndexOnReload=1;
+SET MonthNames='Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec';
+SET LongMonthNames='January;February;March;April;May;June;July;August;September;October;November;December';
+SET DayNames='Mon;Tue;Wed;Thu;Fri;Sat;Sun';
+SET LongDayNames='Monday;Tuesday;Wednesday;Thursday;Friday;Saturday;Sunday';
+SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';
+
+MapaRegiao:
+MAPPING LOAD * INLINE [
+UF, Região
+AC, Norte
+AP, Norte
+AM, Norte
+PA, Norte
+RO, Norte
+RR, Norte
+TO, Norte
+AL, Nordeste
+BA, Nordeste
+CE, Nordeste
+MA, Nordeste
+PB, Nordeste
+PE, Nordeste
+PI, Nordeste
+RN, Nordeste
+SE, Nordeste
+DF, Centro-Oeste
+GO, Centro-Oeste
+MT, Centro-Oeste
+MS, Centro-Oeste
+ES, Sudeste
+MG, Sudeste
+RJ, Sudeste
+SP, Sudeste
+PR, Sul
+RS, Sul
+SC, Sul
+];
+
+MapaCategoria:
+MAPPING LOAD
+    product_category_name,
+    product_category_name_english
+FROM [lib://DataFiles/product_category_name_translation.csv]
+(txt, utf8, embedded labels, delimiter is ',', msq);
+
+MapaQtdItens:
+MAPPING LOAD
+    order_id,
+    Count(order_item_id)
+FROM [lib://DataFiles/olist_order_items_dataset.csv]
+(txt, utf8, embedded labels, delimiter is ',', msq)
+GROUP BY order_id;
+
+Pedidos:
+LOAD
+    *,
+    Year([Data Compra]) AS [Ano],
+    Date(MonthStart([Data Compra]), 'YYYY-MM') AS [Ano-Mês],
+
+    If([Status Pedido]='delivered' AND Not IsNull([Data Entrega]),
+        Floor([Data Entrega]) - Floor([Data Compra])) AS [Dias Entrega],
+    If([Status Pedido]='delivered' AND Not IsNull([Data Entrega]),
+        If(Floor([Data Entrega]) > Floor([Data Estimada]), 1, 0)) AS [Flag Atraso],
+
+    If([Status Pedido]='delivered' AND IsNull([Data Entrega]), 1, 0) AS [Flag Entregue Sem Data],
+    If(Not IsNull([Data Entrega]) AND [Data Entrega] < [Data Compra], 1, 0) AS [Flag Entrega Antes da Compra],
+    If(ApplyMap('MapaQtdItens', [ID Pedido], 0) = 0, 1, 0) AS [Flag Sem Itens]
+;
+LOAD
+    order_id AS [ID Pedido],
+    customer_id AS [ID Cliente],
+    order_status AS [Status Pedido],
+    Timestamp#(order_purchase_timestamp, 'YYYY-MM-DD hh:mm:ss') AS [Data Compra],
+    If(Len(Trim(order_delivered_customer_date)) > 0,
+        Timestamp#(order_delivered_customer_date, 'YYYY-MM-DD hh:mm:ss')) AS [Data Entrega],
+    Timestamp#(order_estimated_delivery_date, 'YYYY-MM-DD hh:mm:ss') AS [Data Estimada]
+FROM [lib://DataFiles/olist_orders_dataset.csv]
+(txt, utf8, embedded labels, delimiter is ',', msq);
+
+Clientes:
+LOAD
+    customer_id AS [ID Cliente],
+    customer_unique_id AS [ID Cliente Único],
+    customer_city AS [Cidade],
+    customer_state AS [UF],
+    ApplyMap('MapaRegiao', customer_state, 'Não identificada') AS [Região]
+FROM [lib://DataFiles/olist_customers_dataset.csv]
+(txt, utf8, embedded labels, delimiter is ',', msq);
+
+Produtos:
+LOAD
+    product_id AS [ID Produto],
+    If(Len(Trim(product_category_name)) = 0, 'Sem categoria', product_category_name) AS [Categoria],
+    ApplyMap('MapaCategoria', product_category_name, 'Sem categoria') AS [Categoria EN]
+FROM [lib://DataFiles/olist_products_dataset.csv]
+(txt, utf8, embedded labels, delimiter is ',', msq);
+
+Itens:
+LOAD
+    order_id AS [ID Pedido],
+    order_item_id AS [Nº Item],
+    product_id AS [ID Produto],
+    seller_id AS [ID Vendedor],
+    price AS [Valor Item],
+    freight_value AS [Valor Frete],
+    If(freight_value = 0, 1, 0) AS [Flag Frete Zero]
+FROM [lib://DataFiles/olist_order_items_dataset.csv]
+(txt, utf8, embedded labels, delimiter is ',', msq);
